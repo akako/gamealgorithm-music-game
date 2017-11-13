@@ -1,12 +1,17 @@
-﻿using System.Collections;
+﻿using System;
+using System.IO;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.Events;
 using UnityEngine.EventSystems;
+using UnityEditor;
+using Common;
+using Common.Data;
 
-namespace Common.Recorder
+namespace Recorder
 {
     public class SceneController : MonoBehaviour
     {
@@ -20,10 +25,12 @@ namespace Common.Recorder
         Button[] noteButtons;
         [SerializeField]
         Text time;
+        [SerializeField]
+        TextAsset preloadSongDataAsset;
 
-        List<Note> notes = new List<Note>();
         bool isRecording = false;
         float previousTime = 0f;
+        SongData song;
 
         void Start()
         {
@@ -37,6 +44,17 @@ namespace Common.Recorder
             {
                 noteButtons[i].onClick.AddListener(GetOnNoteButtonClickAction(i));
             }
+
+            // 楽曲データのロード
+            if (null != preloadSongDataAsset)
+            {
+                song = SongData.LoadFromJson(preloadSongDataAsset.text);
+                playButton.interactable = song.HasNote;
+            }
+            else
+            {
+                song = new SongData();
+            }
         }
 
         void Update()
@@ -44,7 +62,7 @@ namespace Common.Recorder
             // 時間表示の更新
             var bgmTime = audioManager.bgm.time;
             time.text = string.Format("{0:00}:{1:00}:{2:000}",
-                Mathf.FloorToInt(bgmTime / 60f), 
+                Mathf.FloorToInt(bgmTime / 60f),
                 Mathf.FloorToInt(bgmTime % 60f),
                 Mathf.FloorToInt(bgmTime % 1f * 1000));
 
@@ -67,17 +85,22 @@ namespace Common.Recorder
                 if (!audioManager.bgm.isPlaying)
                 {
                     isRecording = false;
-                    playButton.interactable = notes.Count > 0;
+                    playButton.interactable = song.HasNote;
+
+                    // 録音後の自動保存
+                    var path = string.Format("Assets/Resources/{0}.txt", DateTime.Now.ToString("yyyyMMddHHmmss"));
+                    File.WriteAllText(path, JsonUtility.ToJson(song));
+                    AssetDatabase.Refresh();
                 }
             }
             else if (audioManager.bgm.isPlaying)
             {
                 // 録音したノート音を再生
-                foreach (var note in notes.Where(x => previousTime < x.time && x.time <= bgmTime))
+                foreach (var note in song.GetNotesBetweenTime(previousTime, bgmTime))
                 {
-                    audioManager.notes[note.noteNumber].Play();
-                    noteButtons[note.noteNumber].Select();
-                    StartCoroutine(DeselectCoroutine(noteButtons[note.noteNumber]));
+                    audioManager.notes[note.NoteNumber].Play();
+                    noteButtons[note.NoteNumber].Select();
+                    StartCoroutine(DeselectCoroutine(noteButtons[note.NoteNumber]));
                 }
                 previousTime = bgmTime;
             }
@@ -104,12 +127,13 @@ namespace Common.Recorder
         {
             if (audioManager.bgm.isPlaying)
             {
+                // 録音終了時の処理
                 audioManager.bgm.Stop();
             }
             else
             {
-                // 録音開始時は前の録音内容をクリアする
-                notes.Clear();
+                // 録音開始時の処理
+                song.ClearNotes();
                 audioManager.bgm.Play();
                 isRecording = true;
             }
@@ -150,7 +174,7 @@ namespace Common.Recorder
                     return;
                 }
 
-                notes.Add(new Note(audioManager.bgm.time, noteNo));
+                song.AddNote(audioManager.bgm.time, noteNo);
                 audioManager.notes[noteNo].Play();
                 noteButtons[noteNo].Select();
                 StartCoroutine(DeselectCoroutine(noteButtons[noteNo]));
